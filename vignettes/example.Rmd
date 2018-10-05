@@ -1,0 +1,282 @@
+---
+title: "Example using the cbenefit package"
+author: "Theodor Adrian Balan"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = ">"
+)
+```
+
+
+# Installing and loading the package
+`cbenefit` development version can be installed with:
+```{r, eval=FALSE}
+devtools::install_github("tbalan/cbenefit")
+```
+Sometimes, to make sure that the vignettes are built, you have to use the option `build_vignettes = TRUE`. Then the packages is loaded in the usual way:
+```{r}
+library(cbenefit)
+```
+
+# An example data set
+A toy data set is included with `cbenefit`:
+```{r}
+data("dat_toy")
+head(dat_toy)
+```
+
+## Fitting models
+Non-penalized models are fitted with the `model_fit` function:
+```{r}
+# Cox model, wrapper around coxph()
+model_fit(Surv(time, status) ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "coxph")
+
+# Logistic regression, wrapper around glm()
+model_fit(status ~ treat +  x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+          dat_toy, model = "glm")
+```
+
+Penalized models are fitted with the `model_fit_glmnet` function. Note that here also the treatment name must be specified. The resulting object of class `c_glmnet` contains, in addition to the `cv.glmnet` result, 4 fields: `x` (the model matrix), `x_other` (the model matrix, with the treatment switched), `y` (the outcome, a numeric vector for `glm` or a `Surv` object for `coxph`). this is needed because `cv.glmnet` do not easily provide a model frame for further calculations.
+```{r, results="hide"}
+# survival, ridge
+model_fit_glmnet(Surv(time, status) ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "coxph", pen = "ridge", treat_name = "treat")
+
+# survival, lasso
+model_fit_glmnet(Surv(time, status) ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "coxph", pen = "lasso", treat_name = "treat")
+
+# logistic, ridge
+model_fit_glmnet(status ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "glm", pen = "ridge", treat_name = "treat")
+
+# logistic, lasso
+model_fit_glmnet(status ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "glm", pen = "lasso", treat_name = "treat")
+```
+
+You can get a data frame with the estimated coefficients using the `coef_cbenefit` function:
+```{r}
+m1 <- model_fit(Surv(time, status) ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "coxph")
+
+m2 <- model_fit_glmnet(status ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "glm", pen = "lasso", treat_name = "treat")
+
+coef_cbenefit(m1)
+coef_cbenefit(m2)
+```
+
+## Calculating c index and c for benefit
+```{r}
+mod <- model_fit(Surv(time, status) ~  treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8,
+dat_toy, model = "coxph")
+```
+The function that does most work is `benefit_cv`. Two important parameters here: `folds` is the number of folds for the *k*-fold cross validation and `times` is the number of times that the cross-validation process is repeated. For example, five times *k*-fold cross validation:
+```{r}
+bb <- benefit_cv(mod, "treat", folds = 10, times = 5)
+
+bb
+```
+
+All three fields contain: the c-index (aka c-statistic), the c-for-benefit statustic (van Klaveren et al, 2018), and the E-mean and E-90 statistics for benefit. The first part is without corss validation. The "average c-statistics" are obtained by calculating them at each iteration of the cross-validation and then averaging. The "c-statistics on averaged probabilities" are obtained by calculating the statistics on the average of the predicted probabilities from each iteration of the cross-validation. 
+
+An option that was not used here is the `reproducible` option. For example, check this out with only cross-validation happening once:
+
+```{r}
+bb <- benefit_cv(mod, "treat", folds = 10, times = 1)
+
+bb
+```
+There is usually a difference between the two cross-validatated benefit indexes, although they should be equal. The reason for this is that the matching of the individuals actually happens mode times: once (before cross-validation), `times` times, for each cross-validation iteration, and again once at the end on the averaged probabilities. This matching is usually stochastic and it messes with the current seed (no option to change that in `MatchIt`). The other source of randomness comes from calculating the folds in the cross-validation. So what if you want to actually replicate your results? A sort-of-solution is to use the `reproducible = TRUE` option:
+
+```{r}
+bb <- benefit_cv(mod, "treat", folds = 10, times = 1, reproducible = TRUE)
+
+bb
+```
+
+The way that this works is as follows 
+  - the first matching happens with `set.seed(1)`. 
+  - iteration `i` of the cross-validation starts with `set.seed(i)`
+  - before each matching at iteration `i`, `set.seed(i)` is called again
+  - the last matching (on the average predicted probabilities) is preceded by a `set.seed(1)`
+  
+### Experimental features
+
+- Do you prefer matching by covariates instead of the default (predicted benefit)? Set the argument `match_by = "covariates"` and specify the data frame where the model was fitted. Should work but did not test it a lot.
+
+```{r}
+mcv <- benefit_cv(mod, "treat", folds = 10, times = 1, match_by = "covariates", data = dat_toy)
+mcv
+```
+You will see that here the c for benefits are exact: the reason is that this matching does no have to be re-calculated every time (since it only depends on covariates).
+
+- Do you want to change the way individuals are matched? Then you can use the `...` argumnet to pass on to `MatchIt::matchit`. Check out the documentation of that function for more details. At this moment overriding "method" does not seem to work, since `matchit` does not provide a match matrix for other methods. Will look further into this.
+
+```{r}
+matchb <- benefit_cv(mod, "treat", folds = 10, times = 1, matchit_args = list(distance = "mahalanobis"))
+
+matchc <- benefit_cv(mod, "treat", folds = 10, times = 1, matchit_args = list(distance = "cloglog"))
+```
+
+## Calibration and net benefit plots
+Calibration plots and net benefit plots are obtained with the `calibration_plot()` and `net_benefit_plot()` functions. They each return a list of two `ggplot` objects: one without cross validation, one after cross-validation. For these plots the probabilities that are averaged from all the iterations of the cross validation are used.
+```{r}
+cp <- calibration_plot(bb)
+nb <- net_benefit_plot(bb)
+
+library(ggplot2)
+cp$caplot_nocv 
+cp$caplot_cv
+
+nb$nbplot_nocv 
+nb$nbplot_cv
+```
+
+You can also put them all in one plot with the package `egg`:
+```{r}
+library(egg)
+ggarrange(plots = cp, nrow = 1)
+ggarrange(plots = nb, nrow = 1)
+```
+
+# Playing with formulas
+
+## Parameters to be specified
+```{r}
+model <- "coxph"
+# at the formula, just specify it without interactions, just the variables you want in
+formula <- Surv(time, status) ~ treat + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8
+dataset <- "dat_toy"
+treat_name <- "treat"
+model = "coxph"
+```
+
+
+Now we can manipulate the formula in whichever way we want:
+```{r}
+library(rms) # need it for rcs
+
+# get the names of all the variables
+allvars <- attr(terms(formula), "term.labels") 
+
+# model for prognostic index, without treatment
+model_pi <- model_fit(formula = as.formula(paste0(formula[2], "~", paste0(setdiff(allvars, treat_name), collapse = "+"))),
+                      model = model,
+                      data = dataset)
+
+# get prognostic index
+pi <- scale(predict(model_pi, type = "lp"), center = TRUE, scale = FALSE)
+pi_rcs <- as.vector(rcs(pi, 3)[,2])
+
+# constant relative treatment effect
+model_rte <- model_fit(formula = formula,
+                       model = model, 
+                       data = dataset)
+
+# treatment interaction with prognostic index
+model_treat_pi <- model_fit(model = model,
+                            formula = as.formula(paste0(formula[2], "~", paste0(treat_name, "*", "pi"))),
+                            data = dataset)
+
+# treatment interaction with cubic splines
+model_treat_pi_rcs <- model_fit(model = model,
+                            formula = as.formula(paste0(formula[2], "~", paste0(treat_name, "*", "(pi + pi_rcs)"))),
+                            data = dataset)
+
+# all interactions
+model_treat_int <- model_fit(model = model, 
+                             formula = as.formula(paste0(formula[2], "~", treat_name, " * (",paste0(setdiff(allvars, treat_name), collapse = "+"),")")),
+                             data = dataset)
+
+# ridge, all interactions
+model_ridge <- model_fit_glmnet(formula = as.formula(paste0(formula[2], "~", treat_name, " * (",paste0(setdiff(allvars, treat_name), collapse = "+"),")")),
+                                model = model, 
+                             pen = "ridge",
+                             treat_name = treat_name,
+                             data = dataset)
+
+# lasso, all interactions
+model_lasso <- model_fit_glmnet(
+                             formula = as.formula(paste0(formula[2], "~", treat_name, " * (",paste0(setdiff(allvars, treat_name), collapse = "+"),")")),
+                             model = model, 
+                             pen = "lasso",
+                             treat_name = treat_name,
+                             data = dataset)
+
+```
+
+Now that all the models are fitted, we can run cross validation on all of them:
+```{r}
+models <- list(#pi = model_pi, 
+               rte = model_rte, 
+               treat_pi = model_treat_pi, 
+               treat_pi_rcs = model_treat_pi_rcs, 
+               treat_allint = model_treat_int,
+               ridge = model_ridge,
+               lasso = model_lasso)
+
+# repeat only 3 times cross validation, to be quick here
+res <- lapply(models, benefit_cv, folds = 10, times = 3, reproducible = TRUE, treat_name = "treat")
+```
+
+And now an example how to print all this stuff nicely:
+
+```{r}
+library(pander)
+library(egg)
+library(broom)
+
+cat_asis <- function(x) knitr::asis_output(capture.output(x))
+
+
+for(i in 1:length(models)) {
+  
+  cat_asis(pandoc.header(names(models)[i], level = 2))
+  #knitr::asis_outputpandoc.header(names(models)[i], level = 2)
+  
+  cat_asis(pandoc.header("Estimates", level = 3))
+  
+  cat("\n")
+  
+  print(knitr::kable(coef_cbenefit(models[[1]])))
+  
+  cat("\n")
+  
+  cat_asis(pandoc.header("C for benefit", level = 3))
+  
+  cat("\n")
+  print(res[[i]])
+  
+  cat("\n")
+  
+  cat_asis(pandoc.verbatim(print(res[[i]])))
+  
+  cat("\n")
+  
+  cat_asis(pandoc.header("Plots", level = 3))
+
+  ggarrange(plots = calibration_plot(res[[i]]), nrow = 1)
+  ggarrange(plots = net_benefit_plot(res[[i]]), nrow = 1)
+  
+  cat("\n")
+}
+
+```
+
+
+
+
+
+
