@@ -1,6 +1,6 @@
 Package: cbenefit
 Title: Cross Validated C-Index and C-Index for Benefit 
-Version: 0.2.0
+Version: 0.2.2
 Author: Theodor Adrian Balan, David van Klaveren
 Maintainer: Theodor Adrian Balan <hello@tbalan.com>
 Description: Calculates cross-validated the c-index (or c-statistic) and the c-for-benefit of van Klaveren et al.<10.1016/j.jclinepi.2017.10.021> for Cox proportional hazards and logistic regression models. Calibration and net befit plotting functions are provided. Ridge and LASSO penalties are supported via the glmnet package. 
