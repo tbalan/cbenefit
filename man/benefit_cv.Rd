@@ -6,7 +6,7 @@
 \usage{
 benefit_cv(model_fit, treat_name, folds = 10, times = 10,
   reproducible = FALSE, match_by = "benefit", data = NULL,
-  matchit_args = list())
+  replace = FALSE, matchit_args = list())
 }
 \arguments{
 \item{model_fit}{An object as returned by model_fit or model_fit_glmnet}
@@ -22,6 +22,8 @@ benefit_cv(model_fit, treat_name, folds = 10, times = 10,
 \item{match_by}{One of "benefit" or "covariates" - what should the matching be based on?}
 
 \item{data}{Must only be specified if match_by = "covariates", the data frame.}
+
+\item{replace}{Logical, whether matching should be done with replacement. Default is `FALSE`. This argument is passed to MatchIt::matchit and overrides the parameters given in the `matchit_args` argument.}
 
 \item{matchit_args}{A list with other arguments that are passed on to matchit. See ?MatchIt::matchit for options like distance or method of matching.}
 }
